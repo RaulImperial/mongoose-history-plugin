@@ -1,7 +1,8 @@
 let JsonDiffPatch = require('jsondiffpatch'),
   semver = require('semver');
 
-let historyPlugin = (options = {}) => {
+let historyPlugin = (originalSchema, options = {}) => {
+  originalSchema.set('versionKey', false);
   let pluginOptions = {
     mongoose: false, // A mongoose instance
     modelName: '__histories', // Name of the collection for the histories
@@ -58,6 +59,8 @@ let historyPlugin = (options = {}) => {
         ref: pluginOptions.accountCollection
       },
       version: { type: String, default: pluginOptions.startingVersion },
+      start: Date,
+      end: Date,
       [pluginOptions.timestampFieldName]: Date,
       [pluginOptions.methodFieldName]: String
     },
@@ -68,12 +71,7 @@ let historyPlugin = (options = {}) => {
 
   Schema.set('minimize', false);
   Schema.set('versionKey', false);
-  Schema.set('strict', true);
-
-  Schema.pre('save', function (next) {
-    this[pluginOptions.timestampFieldName] = new Date();
-    next();
-  });
+  Schema.set('strict', false);
 
   let Model = mongoose.model(pluginOptions.modelName, Schema);
 
@@ -116,14 +114,14 @@ let historyPlugin = (options = {}) => {
     options.populate && query.populate(options.populate);
     options.limit && query.limit(options.limit);
 
-    return query.lean();
+    return query;
   };
 
   let getPreviousVersion = async (document) => {
     // get the oldest version from the history collection
     let versions = await document.getVersions();
     return versions[versions.length - 1] ?
-      versions[versions.length - 1].object :
+      versions[versions.length - 1] :
       {};
   };
 
@@ -186,7 +184,7 @@ let historyPlugin = (options = {}) => {
     };
   };
 
-  let saveHistory = async ({ document, diff }) => {
+  let saveHistory = async ({ document, diff }, createdAt) => {
     let lastHistory = await Model.findOne({
       collectionName: getModelName(document.constructor.modelName),
       collectionId: document._id
@@ -199,6 +197,7 @@ let historyPlugin = (options = {}) => {
     obj.collectionName = getModelName(document.constructor.modelName);
     obj.collectionId = document._id;
     obj.diff = diff || {};
+    obj.start = createdAt;
 
     if (document.__history) {
       obj.event = document.__history.event;
@@ -247,6 +246,7 @@ let historyPlugin = (options = {}) => {
     let preSave = function (forceSave) {
       return async function (next) {
         let currentDocument = this;
+        const createdAt = new Date();
         if (currentDocument.__history !== undefined || pluginOptions.noEventSave) {
           try {
 
@@ -258,7 +258,7 @@ let historyPlugin = (options = {}) => {
             }
 
             let currentObject = cleanFields(cloneObjectByJson(currentDocument));
-            let previousObject = cleanFields(cloneObjectByJson(previousVersion));
+            let previousObject = cleanFields(cloneObjectByJson(previousVersion.object));
 
             if (pluginOptions.ignorePopulatedFields) {
               await repopulate(currentDocument, populatedFields);
@@ -270,9 +270,14 @@ let historyPlugin = (options = {}) => {
               document: currentDocument,
               forceSave
             });
-
+            
             if (diff || pluginOptions.noDiffSave || saveWithoutDiff) {
-              await saveHistory({ document: currentDocument, diff });
+              await saveHistory({ document: currentDocument, diff }, createdAt);
+              if (Object.keys(previousVersion).length > 0) {
+                previousVersion.set('end', createdAt)
+                await previousVersion.save();
+              }
+              
             }
 
             return next();
@@ -313,14 +318,14 @@ let historyPlugin = (options = {}) => {
 
       options.sort = options.sort || '-' + pluginOptions.timestampFieldName;
 
-      return query('findOne', options);
+      return query('findOne', options).lean();
     };
 
     // versions.get
     schema.methods.getVersion = async function (version2get, includeObject = true) {
       let histories = await this.getDiffs({
         sort: pluginOptions.timestampFieldName
-      });
+      }).lean();
 
       let lastVersion = histories[histories.length - 1],
         firstVersion = histories[0],
@@ -378,6 +383,7 @@ let historyPlugin = (options = {}) => {
       options.sort = options.sort || pluginOptions.timestampFieldName;
 
       let histories = await this.getDiffs(options);
+
 
       if (!includeObject) {
         return histories;
