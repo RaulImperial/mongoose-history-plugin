@@ -1,8 +1,7 @@
 let JsonDiffPatch = require('jsondiffpatch'),
   semver = require('semver');
 
-let historyPlugin = (originalSchema, options = {}) => {
-  originalSchema.set('versionKey', false);
+let historyPlugin = (options = {}) => {
   let pluginOptions = {
     mongoose: false, // A mongoose instance
     modelName: '__histories', // Name of the collection for the histories
@@ -45,7 +44,7 @@ let historyPlugin = (originalSchema, options = {}) => {
   let Schema = new mongoose.Schema(
     {
       collectionName: String,
-      collectionId: { type: collectionIdType },
+      documentId: { type: collectionIdType },
       diff: {},
       event: String,
       reason: String,
@@ -103,7 +102,7 @@ let historyPlugin = (originalSchema, options = {}) => {
     if (options.select !== undefined) {
       Object.assign(options.select, {
         _id: 0,
-        collectionId: 0,
+        documentId: 0,
         collectionName: 0
       });
 
@@ -187,7 +186,7 @@ let historyPlugin = (originalSchema, options = {}) => {
   let saveHistory = async ({ document, diff }, createdAt) => {
     let lastHistory = await Model.findOne({
       collectionName: getModelName(document.constructor.modelName),
-      collectionId: document._id
+      documentId: document._id
     })
       .sort('-' + pluginOptions.timestampFieldName)
       .select({ version: 1 });
@@ -195,7 +194,7 @@ let historyPlugin = (originalSchema, options = {}) => {
 
     let obj = {};
     obj.collectionName = getModelName(document.constructor.modelName);
-    obj.collectionId = document._id;
+    obj.documentId = document._id;
     obj.diff = diff || {};
     obj.start = createdAt;
 
@@ -299,7 +298,7 @@ let historyPlugin = (originalSchema, options = {}) => {
       options.find = options.find || {};
       Object.assign(options.find, {
         collectionName: getModelName(this.constructor.modelName),
-        collectionId: this._id
+        documentId: this._id
       });
 
       options.sort = options.sort || '-' + pluginOptions.timestampFieldName;
@@ -312,7 +311,7 @@ let historyPlugin = (originalSchema, options = {}) => {
       options.find = options.find || {};
       Object.assign(options.find, {
         collectionName: getModelName(this.constructor.modelName),
-        collectionId: this._id,
+        documentId: this._id,
         version: version
       });
 
